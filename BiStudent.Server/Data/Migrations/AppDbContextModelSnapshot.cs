@@ -400,6 +400,9 @@ namespace BiStudent.Server.Data.Migrations
                     b.Property<int>("GroupId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("Imported")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateOnly?>("OneOffDate")
                         .HasColumnType("TEXT");
 

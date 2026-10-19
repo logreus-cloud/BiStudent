@@ -36,7 +36,7 @@ public sealed class ScheduleImportService(AppDbContext db, AccountService accoun
         await using var transaction = await db.Database.BeginTransactionAsync();
         var groupsCreated = 0;
         var groupIds = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        foreach (var name in lessons.Select(x => x.Group).Distinct())
+        foreach (var name in parsed.Groups.Select(x => x.Group).Where(selected.Contains).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var group = await db.Groups.SingleOrDefaultAsync(x => x.Name == name);
             if (group is null) { group = new Group { Name = name }; db.Groups.Add(group); await db.SaveChangesAsync(); groupsCreated++; }
@@ -45,10 +45,13 @@ public sealed class ScheduleImportService(AppDbContext db, AccountService accoun
 
         var teachers = new List<ImportedTeacherDto>();
         var teacherIds = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var knownTeachers = await db.Teachers.AsNoTracking().ToListAsync();
         foreach (var name in lessons.Select(x => x.Teacher).Distinct())
         {
             var vacancy = name == CollegeScheduleParser.Vacancy;
-            var existing = await db.Teachers.AsNoTracking().FirstOrDefaultAsync(x => x.FullName == name);
+            var existing = knownTeachers.FirstOrDefault(x => x.FullName.Equals(name, StringComparison.OrdinalIgnoreCase));
+            var matches = knownTeachers.Where(x => CollegeScheduleParser.TeacherNamesMatch(name, x.FullName)).ToList();
+            existing ??= matches.Count == 1 ? matches[0] : null;
             if (existing is not null)
             {
                 teacherIds[name] = existing.Id;
@@ -57,13 +60,16 @@ public sealed class ScheduleImportService(AppDbContext db, AccountService accoun
             }
             var login = await FreeLoginAsync(vacancy ? "vacancy" : Login(name));
             var created = await accounts.CreateAsync(new SaveTeacherRequest(login, name, false, !vacancy));
-            teacherIds[name] = (await db.Teachers.AsNoTracking().SingleAsync(x => x.Login == login)).Id;
+            var teacher = await db.Teachers.AsNoTracking().SingleAsync(x => x.Login == login);
+            knownTeachers.Add(teacher);
+            teacherIds[name] = teacher.Id;
             teachers.Add(new ImportedTeacherDto(name, login, vacancy ? null : created.Password, true, !vacancy));
         }
 
-        var existingSlots = await db.ScheduleSlots.AsNoTracking()
+        var existingSlots = await db.ScheduleSlots
             .Where(x => groupIds.Values.Contains(x.GroupId)).ToListAsync();
         var keys = existingSlots.Select(Key).ToHashSet();
+        var newSlots = new List<ScheduleSlot>();
         var added = 0;
         var skipped = 0;
         foreach (var lesson in lessons)
@@ -74,7 +80,7 @@ public sealed class ScheduleImportService(AppDbContext db, AccountService accoun
             {
                 TeacherId = teacherIds[lesson.Teacher], GroupId = groupIds[lesson.Group],
                 Subject = lesson.Subject.Length > 200 ? lesson.Subject[..200] : lesson.Subject, Room = lesson.Room,
-                DayOfWeek = lesson.Day, Start = lesson.Start, End = lesson.End, Parity = WeekParity.Every
+                DayOfWeek = lesson.Day, Start = lesson.Start, End = lesson.End, Parity = WeekParity.Every, Imported = true
             };
             if (lesson.Once)
             {
@@ -86,13 +92,44 @@ public sealed class ScheduleImportService(AppDbContext db, AccountService accoun
                 slot.ValidFrom = monday;
                 slot.ValidTo = parsed.SemesterStart.AddDays(7 * lesson.ToWeek - 1);
             }
+            newSlots.Add(slot);
             if (!keys.Add(Key(slot))) { skipped++; continue; }
             db.ScheduleSlots.Add(slot);
             added++;
         }
+        var newKeys = newSlots.Select(Key).ToHashSet();
+        var outdated = existingSlots.Where(x => x.Imported && !newKeys.Contains(Key(x))).ToList();
+        var removed = 0;
+        if (outdated.Count > 0)
+        {
+            var outdatedIds = outdated.Select(x => x.Id).ToArray();
+            var dates = (await db.AttendanceMarks.AsNoTracking().Where(x => outdatedIds.Contains(x.SlotId))
+                    .Select(x => new { x.SlotId, x.Date }).ToListAsync())
+                .Concat(await db.LessonGrades.AsNoTracking().Where(x => outdatedIds.Contains(x.SlotId))
+                    .Select(x => new { x.SlotId, x.Date }).ToListAsync())
+                .Concat(await db.SlotCancellations.AsNoTracking().Where(x => outdatedIds.Contains(x.SlotId))
+                    .Select(x => new { x.SlotId, x.Date }).ToListAsync());
+            var latestDates = dates.GroupBy(x => x.SlotId).ToDictionary(x => x.Key, x => x.Max(y => y.Date));
+            var yesterday = DateOnly.FromDateTime(DateTime.Now).AddDays(-1);
+            foreach (var slot in outdated)
+            {
+                if (!latestDates.TryGetValue(slot.Id, out var latest))
+                {
+                    db.ScheduleSlots.Remove(slot);
+                    removed++;
+                    continue;
+                }
+                if (slot.OneOffDate is not null) continue;
+                var end = slot.ValidTo is DateOnly to && to < yesterday ? to : yesterday;
+                if (end < latest || end < slot.ValidFrom) end = latest;
+                if (slot.ValidTo == end) continue;
+                slot.ValidTo = end;
+                removed++;
+            }
+        }
         await db.SaveChangesAsync();
         await transaction.CommitAsync();
-        return new ScheduleImportResultDto(added, skipped, groupsCreated, teachers, warnings);
+        return new ScheduleImportResultDto(added, skipped, groupsCreated, teachers, warnings, removed);
     }
 
     private ParsedSchedule Parse(Stream xlsx)

@@ -99,7 +99,7 @@ public sealed record ImportResultDto(int Added, int Skipped, List<string> Errors
 public sealed record ScheduleImportGroupDto(string Sheet, string Group, int Lessons, bool Exists);
 public sealed record ScheduleImportPreviewDto(DateOnly SemesterStart, List<ScheduleImportGroupDto> Groups, List<string> Teachers, List<string> Warnings);
 public sealed record ImportedTeacherDto(string FullName, string Login, string? TemporaryPassword, bool Created, bool Active);
-public sealed record ScheduleImportResultDto(int Added, int Skipped, int GroupsCreated, List<ImportedTeacherDto> Teachers, List<string> Warnings);
+public sealed record ScheduleImportResultDto(int Added, int Skipped, int GroupsCreated, List<ImportedTeacherDto> Teachers, List<string> Warnings, int Removed = 0);
 public sealed record ErrorDto(string Message);
 
 public sealed record BackupFileDto(string Name, DateTime CreatedAt, long Size, bool Automatic);

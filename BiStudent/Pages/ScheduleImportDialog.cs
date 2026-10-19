@@ -87,7 +87,8 @@ internal sealed class ScheduleImportDialog : DialogShell
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, result.Warnings.Count > 0 ? 110 : 0));
-        layout.Controls.Add(Ui.Label($"Добавлено занятий: {result.Added}, уже были: {result.Skipped}, новых групп: {result.GroupsCreated}.\n" +
+        layout.Controls.Add(Ui.Label($"Добавлено занятий: {result.Added}, уже были: {result.Skipped}, новых групп: {result.GroupsCreated}" +
+            (result.Removed > 0 ? $", убрано устаревших: {result.Removed}" : "") + ".\n" +
             "Передайте временные пароли преподавателям лично — при первом входе система попросит их сменить.", 10, Theme.Text), 0, 0);
         var grid = Ui.Grid();
         grid.Dock = DockStyle.Fill;

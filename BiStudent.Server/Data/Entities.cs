@@ -70,6 +70,7 @@ public sealed class ScheduleSlot
     public DateOnly ValidFrom { get; set; }
     public DateOnly? ValidTo { get; set; }
     public DateOnly? OneOffDate { get; set; }
+    public bool Imported { get; set; }
     public List<SlotCancellation> Cancellations { get; set; } = [];
 }
 

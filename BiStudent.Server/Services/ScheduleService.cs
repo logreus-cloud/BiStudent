@@ -74,6 +74,7 @@ public sealed class ScheduleService(AppDbContext db, IConfiguration configuratio
 
     public async Task<ScheduleSlot> AddSlotAsync(ScheduleSlot slot)
     {
+        slot.Imported = false;
         await ValidateAsync(slot);
         db.ScheduleSlots.Add(slot);
         await db.SaveChangesAsync();
@@ -95,6 +96,7 @@ public sealed class ScheduleService(AppDbContext db, IConfiguration configuratio
         current.ValidFrom = slot.ValidFrom;
         current.ValidTo = slot.ValidTo;
         current.OneOffDate = slot.OneOffDate;
+        current.Imported = false;
         await db.SaveChangesAsync();
     }
 
