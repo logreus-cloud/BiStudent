@@ -83,19 +83,44 @@ public sealed class AttendanceService(AppDbContext db, IConfiguration configurat
             throw new InvalidOperationException("Студент не принадлежит группе этой пары.");
         if (score is < 1 or > 100) throw new InvalidOperationException("Балл должен быть от 1 до 100.");
         var grade = await db.LessonGrades.SingleOrDefaultAsync(x => x.SlotId == slotId && x.Date == date && x.StudentId == studentId);
+        var changed = false;
         if (score is null)
         {
             if (grade is null) return;
             db.LessonGrades.Remove(grade);
+            changed = true;
         }
-        else if (grade is null)
-            db.LessonGrades.Add(new LessonGrade { SlotId = slotId, Date = date, StudentId = studentId, Score = score.Value });
         else
         {
-            if (grade.Score == score) return;
-            grade.Score = score.Value;
-            grade.UpdatedAt = DateTime.Now;
+            if (grade is null)
+            {
+                db.LessonGrades.Add(new LessonGrade { SlotId = slotId, Date = date, StudentId = studentId, Score = score.Value });
+                changed = true;
+            }
+            else if (grade.Score != score)
+            {
+                grade.Score = score.Value;
+                grade.UpdatedAt = DateTime.Now;
+                changed = true;
+            }
+            var mark = await db.AttendanceMarks.SingleOrDefaultAsync(x => x.SlotId == slotId && x.Date == date && x.StudentId == studentId);
+            if (mark?.Status != AttendanceStatus.Present)
+            {
+                if (mark is null)
+                {
+                    mark = new AttendanceMark { SlotId = slotId, Date = date, StudentId = studentId };
+                    db.AttendanceMarks.Add(mark);
+                }
+                mark.Status = AttendanceStatus.Present;
+                mark.Method = MarkMethod.Manual;
+                mark.MarkedAt = DateTime.Now;
+                mark.ExcuseReason = null;
+                mark.Comment = null;
+                mark.HasDocument = false;
+                changed = true;
+            }
         }
+        if (!changed) return;
         await db.SaveChangesAsync();
         notifier.Notify(slotId, date);
     }

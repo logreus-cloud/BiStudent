@@ -59,6 +59,116 @@ public sealed class GradeTests
     }
 
     [Fact]
+    public async Task LessonGradeCreatesPresentMark()
+    {
+        using var test = new TestDb();
+        var teacher = test.AddTeacher();
+        var group = test.AddGroup("ИВТ-1", "Иван");
+        var slot = test.AddSlot(teacher, group);
+        var date = new DateOnly(2026, 9, 1);
+        var studentId = group.Students[0].Id;
+        var notifications = 0;
+        test.Notifier.Changed += (slotId, changedDate) => notifications++;
+        await test.Attendance.SetLessonGradeAsync(slot.Id, date, studentId, 85);
+        var mark = Assert.Single(test.Db.AttendanceMarks);
+        Assert.Equal(AttendanceStatus.Present, mark.Status);
+        Assert.Equal(MarkMethod.Manual, mark.Method);
+        Assert.Null(mark.ExcuseReason);
+        Assert.Null(mark.Comment);
+        Assert.False(mark.HasDocument);
+        Assert.Equal(85, Assert.Single(test.Db.LessonGrades).Score);
+        Assert.Equal(1, notifications);
+    }
+
+    [Theory]
+    [InlineData(AttendanceStatus.Absent)]
+    [InlineData(AttendanceStatus.Excused)]
+    public async Task LessonGradeChangesAbsenceToPresent(AttendanceStatus status)
+    {
+        using var test = new TestDb();
+        var teacher = test.AddTeacher();
+        var group = test.AddGroup("ИВТ-1", "Иван");
+        var slot = test.AddSlot(teacher, group);
+        var date = new DateOnly(2026, 9, 1);
+        var studentId = group.Students[0].Id;
+        await test.Attendance.MarkAsync(slot.Id, date, studentId, status, MarkMethod.Manual,
+            ExcuseReason.Illness, "Причина", true);
+        await test.Attendance.SetLessonGradeAsync(slot.Id, date, studentId, 85);
+        var mark = Assert.Single(test.Db.AttendanceMarks);
+        Assert.Equal(AttendanceStatus.Present, mark.Status);
+        Assert.Equal(MarkMethod.Manual, mark.Method);
+        Assert.Null(mark.ExcuseReason);
+        Assert.Null(mark.Comment);
+        Assert.False(mark.HasDocument);
+    }
+
+    [Fact]
+    public async Task LessonGradeKeepsCameraPresentMark()
+    {
+        using var test = new TestDb();
+        var teacher = test.AddTeacher();
+        var group = test.AddGroup("ИВТ-1", "Иван");
+        var slot = test.AddSlot(teacher, group);
+        var date = new DateOnly(2026, 9, 1);
+        var studentId = group.Students[0].Id;
+        await test.Attendance.MarkAsync(slot.Id, date, studentId,
+            AttendanceStatus.Present, MarkMethod.Camera);
+        var mark = Assert.Single(test.Db.AttendanceMarks);
+        var markedAt = mark.MarkedAt;
+        await test.Attendance.SetLessonGradeAsync(slot.Id, date, studentId, 85);
+        Assert.Same(mark, Assert.Single(test.Db.AttendanceMarks));
+        Assert.Equal(AttendanceStatus.Present, mark.Status);
+        Assert.Equal(MarkMethod.Camera, mark.Method);
+        Assert.Equal(markedAt, mark.MarkedAt);
+    }
+
+    [Fact]
+    public async Task RemovingLessonGradeKeepsMark()
+    {
+        using var test = new TestDb();
+        var teacher = test.AddTeacher();
+        var group = test.AddGroup("ИВТ-1", "Иван");
+        var slot = test.AddSlot(teacher, group);
+        var date = new DateOnly(2026, 9, 1);
+        var studentId = group.Students[0].Id;
+        await test.Attendance.SetLessonGradeAsync(slot.Id, date, studentId, 85);
+        await test.Attendance.MarkAsync(slot.Id, date, studentId, AttendanceStatus.Excused, MarkMethod.Manual,
+            ExcuseReason.Illness, "Причина", true);
+        var mark = Assert.Single(test.Db.AttendanceMarks);
+        var markedAt = mark.MarkedAt;
+        await test.Attendance.SetLessonGradeAsync(slot.Id, date, studentId, null);
+        Assert.Empty(test.Db.LessonGrades);
+        Assert.Same(mark, Assert.Single(test.Db.AttendanceMarks));
+        Assert.Equal(AttendanceStatus.Excused, mark.Status);
+        Assert.Equal(MarkMethod.Manual, mark.Method);
+        Assert.Equal(ExcuseReason.Illness, mark.ExcuseReason);
+        Assert.Equal("Причина", mark.Comment);
+        Assert.True(mark.HasDocument);
+        Assert.Equal(markedAt, mark.MarkedAt);
+    }
+
+    [Fact]
+    public async Task RepeatedLessonGradeMarksAbsentStudentPresent()
+    {
+        using var test = new TestDb();
+        var teacher = test.AddTeacher();
+        var group = test.AddGroup("ИВТ-1", "Иван");
+        var slot = test.AddSlot(teacher, group);
+        var date = new DateOnly(2026, 9, 1);
+        var studentId = group.Students[0].Id;
+        await test.Attendance.SetLessonGradeAsync(slot.Id, date, studentId, 85);
+        await test.Attendance.MarkAsync(slot.Id, date, studentId,
+            AttendanceStatus.Absent, MarkMethod.Manual);
+        var notifications = 0;
+        test.Notifier.Changed += (slotId, changedDate) => notifications++;
+        await test.Attendance.SetLessonGradeAsync(slot.Id, date, studentId, 85);
+        Assert.Equal(85, Assert.Single(test.Db.LessonGrades).Score);
+        Assert.Equal(AttendanceStatus.Present, Assert.Single(test.Db.AttendanceMarks).Status);
+        Assert.Equal(MarkMethod.Manual, Assert.Single(test.Db.AttendanceMarks).Method);
+        Assert.Equal(1, notifications);
+    }
+
+    [Fact]
     public async Task JournalCombinesLessonsAssessmentsAndFinal()
     {
         using var test = new TestDb();
